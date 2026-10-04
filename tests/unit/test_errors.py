@@ -134,3 +134,22 @@ class TestHumanizeUpstreamError:
         # Real, actionable errors (e.g. invalid symbol) must stay diagnosable.
         real = "One or more symbol is invalid. Symbol should be a list of exchange and ticker"
         assert self._h(ValueError(real)) == real
+
+
+class TestUnsupportedExchange:
+    def test_code_value_and_distinct_from_invalid_exchange(self):
+        assert ErrorCode.UNSUPPORTED_EXCHANGE.value == "UNSUPPORTED_EXCHANGE"
+        assert ErrorCode.UNSUPPORTED_EXCHANGE is not ErrorCode.INVALID_EXCHANGE
+        assert ErrorCode.UNSUPPORTED_EXCHANGE.value != ErrorCode.INVALID_EXCHANGE.value
+
+    def test_exception_to_envelope_shape(self):
+        from tradingview_mcp.core.errors import ScreenerServiceError, exception_to_envelope
+
+        env = exception_to_envelope(
+            ScreenerServiceError(ErrorCode.UNSUPPORTED_EXCHANGE, "m", supported_tools=["a"], retryable=False)
+        )
+        err = env["error"]
+        assert err["code"] == "UNSUPPORTED_EXCHANGE"
+        assert err["message"] == "m"
+        assert err["supported_tools"] == ["a"]
+        assert err["retryable"] is False

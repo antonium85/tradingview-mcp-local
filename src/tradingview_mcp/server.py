@@ -90,11 +90,16 @@ from tradingview_mcp.core.services.backtest_service import (
     compare_strategies as _compare_strategies,
     walk_forward_backtest,
 )
+from tradingview_mcp.hyperliquid_tools import register_hyperliquid_tools
 from tradingview_mcp.core.utils.validators import (
     validate_timeframe,
     validate_exchange,
     normalize_tradingview_symbol,
     normalize_yahoo_symbol,
+    reject_native_exchange,
+    reject_native_symbol_prefix,
+    NATIVE_PROVIDERS,
+    native_support_hint,
 )
 from tradingview_mcp.core.errors import (
     ErrorCode,
@@ -121,7 +126,8 @@ mcp = FastMCP(
         "agriculture, rates, forex, crypto futures). "
         "Tools: top_gainers, top_losers, bollinger_scan, coin_analysis, multi_agent_analysis, "
         "volume_breakout_scanner, futures_market_overview, futures_top_movers, "
-        "futures_category_snapshot, futures_watchlist, egx_market_overview, and more."
+        "futures_category_snapshot, futures_watchlist, egx_market_overview, and more. "
+        "Hyperliquid perpetuals (native API, not TradingView) are available only through hyperliquid_market_overview, hyperliquid_funding_rates and hyperliquid_orderbook."
     ),
 )
 
@@ -571,6 +577,7 @@ def egx_trade_plan(symbol: str, timeframe: str = "1D") -> dict:
         timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D)
     """
     try:
+        reject_native_symbol_prefix(symbol)
         timeframe = validate_timeframe(timeframe, "1D")
         return generate_egx_trade_plan(symbol, timeframe)
     except Exception as e:
@@ -588,6 +595,7 @@ def egx_fibonacci_retracement(symbol: str, lookback: str = "52W", timeframe: str
     """
     lookback = lookback.strip().upper()
     try:
+        reject_native_symbol_prefix(symbol)
         timeframe = validate_timeframe(timeframe, "1D")
         return analyze_egx_fibonacci(symbol, lookback, timeframe)
     except Exception as e:
@@ -628,6 +636,7 @@ def smart_money_analysis(
         interval: 1d (default) or 1h
     """
     try:
+        reject_native_exchange(exchange)
         return analyze_smart_money(symbol, exchange, period, interval)
     except Exception as e:
         return exception_to_envelope(e, context="smart_money_analysis")
@@ -1175,11 +1184,20 @@ async def stock_prices(tickers: str) -> dict:
         return make_error(ErrorCode.UPSTREAM_ERROR, f"price lookup failed: {e}")
 
 
+register_hyperliquid_tools(mcp)
+
+
 # ── Resource ───────────────────────────────────────────────────────────────────
 
 @mcp.resource("exchanges://list")
 def exchanges_list() -> str:
     """List available exchanges from the coinlist directory."""
+    # Generate native venue hints
+    native_hints = "\n".join(
+        native_support_hint(ex) + " Every other tool rejects it with UNSUPPORTED_EXCHANGE."
+        for ex in sorted(NATIVE_PROVIDERS)
+    )
+
     try:
         current_dir = os.path.dirname(__file__)
         coinlist_dir = os.path.join(current_dir, "coinlist")
@@ -1187,15 +1205,21 @@ def exchanges_list() -> str:
             exchanges = [
                 f[:-4].upper()
                 for f in os.listdir(coinlist_dir)
-                if f.endswith(".txt")
+                if f.endswith(".txt") and f[:-4].lower() not in NATIVE_PROVIDERS
             ]
             if exchanges:
-                return f"Available exchanges: {', '.join(sorted(exchanges))}"
+                result = f"Available exchanges: {', '.join(sorted(exchanges))}"
+                if native_hints:
+                    result += "\n" + native_hints
+                return result
     except Exception:
         pass
     # Fallback must only name venues sanitize/validate actually accept —
     # this list used to advertise KRAKEN and BITSTAMP, which are unsupported.
-    return "Common exchanges: KUCOIN, BINANCE, BYBIT, MEXC, BITGET, OKX, COINBASE, GATEIO, HUOBI, BITFINEX, BIST, EGX, NASDAQ, NYSE, TWSE, TPEX"
+    fallback = "Common exchanges: KUCOIN, BINANCE, BYBIT, MEXC, BITGET, OKX, COINBASE, GATEIO, HUOBI, BITFINEX, BIST, EGX, NASDAQ, NYSE, TWSE, TPEX"
+    if native_hints:
+        fallback += "\n" + native_hints
+    return fallback
 
 
 # ── Health endpoint (streamable-http transport) ───────────────────────────────

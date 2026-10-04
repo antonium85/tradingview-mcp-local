@@ -183,3 +183,39 @@ class TestExistingExchangesUnchanged:
     @pytest.mark.parametrize("exchange", ["kucoin", "binance", "bybit", "mexc"])
     def test_crypto_not_in_stock_exchanges(self, exchange):
         assert exchange not in STOCK_EXCHANGES
+
+
+# ── Native (non-TradingView) providers ───────────────────────────────────────
+
+class TestNativeProviders:
+    def test_hyperliquid_is_native_and_not_routable_to_tradingview(self):
+        from tradingview_mcp.core.utils.validators import NATIVE_PROVIDERS, _TA_ONLY_SCREENERS
+
+        assert "hyperliquid" in NATIVE_PROVIDERS
+        assert "hyperliquid" not in EXCHANGE_SCREENER
+        assert "hyperliquid" not in _TA_ONLY_SCREENERS
+        assert "hyperliquid" not in STOCK_EXCHANGES
+
+    def test_sanitize_exchange_keeps_legacy_default_without_opt_in(self):
+        assert sanitize_exchange("HYPERLIQUID", "KUCOIN") == "KUCOIN"
+
+    def test_sanitize_exchange_opt_in(self):
+        assert sanitize_exchange("HYPERLIQUID", "KUCOIN", allow_native=True) == "hyperliquid"
+
+    def test_is_native_provider_is_case_and_whitespace_insensitive(self):
+        from tradingview_mcp.core.utils.validators import is_native_provider
+
+        for ex in ("hyperliquid", "HYPERLIQUID", "  Hyperliquid\t"):
+            assert is_native_provider(ex) is True
+        for ex in (None, "", "binance", "hyper"):
+            assert is_native_provider(ex) is False
+
+    def test_native_support_hint(self):
+        from tradingview_mcp.core.utils.validators import native_support_hint
+
+        hint = native_support_hint("hyperliquid")
+        assert hint == (
+            "HYPERLIQUID is a native (non-TradingView) perpetuals venue; it is supported only by: "
+            "hyperliquid_market_overview, hyperliquid_funding_rates, hyperliquid_orderbook."
+        )
+        assert native_support_hint("binance") == ""

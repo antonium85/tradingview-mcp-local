@@ -84,6 +84,72 @@ _TA_ONLY_SCREENERS: dict = {
     "capitalcom": "cfd",
 }
 
+# Venues TradingView does not carry. NEVER add these to EXCHANGE_SCREENER or
+# _TA_ONLY_SCREENERS: get_market_type() would route them to the TV scanner.
+NATIVE_PROVIDERS: frozenset[str] = frozenset({"hyperliquid"})
+
+# Tools that accept each native venue. This is the single source of truth for
+# hints. Step 1 lists only the new tools; Step 2 appends opted-in tools.
+NATIVE_PROVIDER_TOOLS: dict[str, tuple[str, ...]] = {
+    "hyperliquid": (
+        "hyperliquid_market_overview",
+        "hyperliquid_funding_rates",
+        "hyperliquid_orderbook",
+    ),
+}
+
+
+def is_native_provider(exchange: str | None) -> bool:
+    """True if *exchange* is a native (non-TradingView) venue. Case/space-insensitive."""
+    return (exchange or "").strip().lower() in NATIVE_PROVIDERS
+
+
+def native_support_hint(exchange: str) -> str:
+    """One-sentence hint naming the tools that accept a native venue; "" otherwise."""
+    exs = (exchange or "").strip().lower()
+    if exs not in NATIVE_PROVIDERS:
+        return ""
+    tools = ", ".join(NATIVE_PROVIDER_TOOLS.get(exs, ()))
+    return (
+        f"{exs.upper()} is a native (non-TradingView) perpetuals venue; "
+        f"it is supported only by: {tools}."
+    )
+
+
+def _unsupported_exchange_error(ex: str):
+    """UNSUPPORTED_EXCHANGE error for a native venue passed to a TradingView tool."""
+    from tradingview_mcp.core.errors import ErrorCode, ScreenerServiceError
+
+    exs = ex.strip().lower()
+    return ScreenerServiceError(
+        ErrorCode.UNSUPPORTED_EXCHANGE,
+        f"Exchange {ex!r} is not supported by this tool. {native_support_hint(exs)}",
+        exchange=exs.upper(),
+        supported_tools=list(NATIVE_PROVIDER_TOOLS.get(exs, ())),
+        retryable=False,
+    )
+
+
+def reject_native_exchange(exchange: str | None) -> None:
+    """Raise UNSUPPORTED_EXCHANGE for a native venue; no other validation.
+
+    For tools that take ``exchange`` but never call validate_exchange()
+    (e.g. smart_money_analysis, which passes the venue through to Yahoo).
+    """
+    if is_native_provider(exchange):
+        raise _unsupported_exchange_error(exchange)
+
+
+def reject_native_symbol_prefix(symbol: str | None) -> None:
+    """Raise UNSUPPORTED_EXCHANGE for a native-venue prefix ("HYPERLIQUID:BTC").
+
+    For paths that build the TradingView symbol themselves (EGX tools) and so
+    bypass normalize_tradingview_symbol(); otherwise a no-op.
+    """
+    raw = (symbol or "").strip().upper()
+    if ":" in raw and is_native_provider(raw.split(":", 1)[0]):
+        raise _unsupported_exchange_error(raw.split(":", 1)[0])
+
 # Map validated exchange identifiers to their canonical TradingView symbol prefix.
 # TradingView uses "AMEX" as the prefix for all NYSE Arca / ETF listings; passing
 # "NYSE:GDX" returns no data even though GDX trades on NYSE Arca.
@@ -176,6 +242,8 @@ def normalize_yahoo_symbol(symbol: str) -> str:
 def normalize_tradingview_symbol(symbol: str, exchange: str) -> str:
     """Return a fully-qualified TradingView symbol, resolving common index aliases."""
     raw = (symbol or "").strip().upper()
+    # "HYPERLIQUID:BTC" would otherwise pass through verbatim to the TV scanner.
+    reject_native_symbol_prefix(raw)
     if raw in _TRADINGVIEW_SYMBOL_ALIASES:
         return _TRADINGVIEW_SYMBOL_ALIASES[raw]
     if ":" in raw:
@@ -203,10 +271,12 @@ def sanitize_timeframe(tf: str, default: str = "5m") -> str:
     return _TIMEFRAME_ALIASES.get(normalized, default)
 
 
-def sanitize_exchange(ex: str, default: str = "kucoin") -> str:
+def sanitize_exchange(ex: str, default: str = "kucoin", *, allow_native: bool = False) -> str:
     if not ex:
         return default
     exs = ex.strip().lower()
+    if exs in NATIVE_PROVIDERS:
+        return exs if allow_native else default
     if exs in EXCHANGE_SCREENER or exs in _TA_ONLY_SCREENERS:
         return exs
     return default
@@ -235,18 +305,27 @@ def validate_timeframe(tf: str, default: str = "5m") -> str:
     )
 
 
-def validate_exchange(ex: str, default: str = "kucoin") -> str:
+def validate_exchange(ex: str, default: str = "kucoin", *, allow_native: bool = False) -> str:
     from tradingview_mcp.core.errors import ErrorCode, ScreenerServiceError
 
     if not ex:
         return default
     exs = ex.strip().lower()
+    # Native venues are opt-in per tool: without allow_native they must never
+    # fall through to the TradingView scanner.
+    if exs in NATIVE_PROVIDERS:
+        if allow_native:
+            return exs
+        raise _unsupported_exchange_error(ex)
     if exs in EXCHANGE_SCREENER or exs in _TA_ONLY_SCREENERS:
         return exs
+    valid = {*EXCHANGE_SCREENER, *_TA_ONLY_SCREENERS}
+    if allow_native:
+        valid |= NATIVE_PROVIDERS
     raise ScreenerServiceError(
         ErrorCode.INVALID_EXCHANGE,
         f"Invalid exchange {ex!r}.",
-        valid_exchanges=sorted({*EXCHANGE_SCREENER, *_TA_ONLY_SCREENERS}),
+        valid_exchanges=sorted(valid),
         retryable=False,
     )
 

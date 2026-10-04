@@ -29,7 +29,10 @@ from tradingview_mcp.core.services.coinlist import exchanges_listing_symbol, loa
 from tradingview_mcp.core.services.indicators import compute_metrics
 from tradingview_mcp.core.utils.validators import (
     EXCHANGE_SCREENER,
+    NATIVE_PROVIDER_TOOLS,
     get_tv_exchange_prefix,
+    is_native_provider,
+    native_support_hint,
 )
 
 # Resilience layer (does not require tradingview_ta; safe to import unconditionally).
@@ -545,11 +548,16 @@ def fetch_multi_timeframe_patterns(
 # KUCOIN/MEXC first: their screener rows have been the most complete for the
 # long-tail tickers this fallback exists for.
 _FALLBACK_VENUE_PREFERENCE = ("KUCOIN", "MEXC", "GATEIO", "BYBIT", "OKX", "HUOBI")
+# Native venues (HYPERLIQUID) sit in the coinlists but TradingView can't serve
+# them: scan wide, filter natives, THEN apply the historical cap of 6, so a
+# native listing never displaces a TradingView venue from the top 6.
+_LISTING_SCAN_MAX = 64
 
 
 def pick_fallback_exchange(symbol: str, requested_exchange: str) -> Optional[str]:
     """Best alternative venue that actually lists `symbol`, or None."""
-    listed = [e.upper() for e in exchanges_listing_symbol(symbol)]
+    listed = [e.upper() for e in exchanges_listing_symbol(symbol, max_results=_LISTING_SCAN_MAX)
+              if not is_native_provider(e)][:6]
     req = (requested_exchange or "").upper()
     candidates = [e for e in listed if e != req]
     if not candidates:
@@ -642,7 +650,9 @@ def symbol_not_found_error(symbol: str, exchange: str, **context: Any) -> dict:
     "real instrument the scanner backend doesn't serve" (fund certificates,
     bonds, delisted names — chart-only on TradingView).
     """
-    listed_on = exchanges_listing_symbol(symbol)
+    all_listed = exchanges_listing_symbol(symbol, max_results=_LISTING_SCAN_MAX)
+    listed_on = [e for e in all_listed if not is_native_provider(e)][:6]
+    native_listed_on = [e for e in all_listed if is_native_provider(e)]
     message = f"No data found for {symbol} on {exchange}."
     extra: dict[str, Any] = {}
     if listed_on:
@@ -651,7 +661,21 @@ def symbol_not_found_error(symbol: str, exchange: str, **context: Any) -> dict:
             + ", ".join(listed_on)
             + ". Retry with one of those as `exchange`."
         )
-    else:
+    if native_listed_on:
+        # Native venues are hinted separately: retrying THIS tool there fails.
+        native_tools: list[str] = []
+        for native in native_listed_on:
+            ex_up = native.upper()
+            message += (
+                f" {ex_up} also lists it, but {native_support_hint(ex_up)}"
+                f" Do not retry this tool with exchange=\"{ex_up}\"."
+            )
+            for tool in NATIVE_PROVIDER_TOOLS.get(native.lower(), ()):
+                if tool not in native_tools:
+                    native_tools.append(tool)
+        extra["native_listed_on"] = native_listed_on
+        extra["native_supported_tools"] = native_tools
+    elif not listed_on:
         info = lookup_tradingview_instrument(symbol, exchange)
         if info:
             extra["instrument_type"] = info["type"]
