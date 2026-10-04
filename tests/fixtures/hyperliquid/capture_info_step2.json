@@ -1,0 +1,10 @@
+{
+ "captured_at_ms": 1791119880000,
+ "url": "https://api.hyperliquid.xyz/info",
+ "files": [
+  "candle_snapshot_BTC_15m.json",
+  "candle_snapshot_BTC_1d.json",
+  "candle_snapshot_BTC_1w.json",
+  "candle_snapshot_BTC_4h.json"
+ ]
+}

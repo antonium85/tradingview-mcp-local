@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from tradingview_mcp.core.errors import ErrorCode, make_error
 from tradingview_mcp.core.services.backtest_service import _fetch_ohlcv
@@ -276,6 +276,8 @@ def analyze_smart_money(
     exchange: str = "EGX",
     period: str = "6mo",
     interval: str = "1d",
+    *,
+    fetch_ohlcv: Optional[Callable[[str, str, str], List[dict]]] = None,
 ) -> dict:
     """Full smart-money read for one symbol: MCDX-style decomposition,
     banker fund-flow oscillator, and the volume-flow composite."""
@@ -290,7 +292,7 @@ def analyze_smart_money(
 
     ysym = yahoo_symbol_for(symbol, exchange)
     try:
-        candles = _fetch_ohlcv(ysym, period, interval)
+        candles = (fetch_ohlcv or _fetch_ohlcv)(ysym, period, interval)
     except Exception as e:
         return make_error(
             ErrorCode.UPSTREAM_ERROR,

@@ -78,7 +78,7 @@ def test_names_match_native_provider_tools_when_available():
         from tradingview_mcp.core.utils.validators import NATIVE_PROVIDER_TOOLS
     except ImportError:
         pytest.skip("WP-A not landed")
-    assert set(EXPECTED) == set(NATIVE_PROVIDER_TOOLS["hyperliquid"])
+    assert set(EXPECTED) <= set(NATIVE_PROVIDER_TOOLS["hyperliquid"])
 
 
 def test_overview_default(client):

@@ -91,12 +91,27 @@ from tradingview_mcp.core.services.backtest_service import (
     walk_forward_backtest,
 )
 from tradingview_mcp.hyperliquid_tools import register_hyperliquid_tools
+from tradingview_mcp.core.services.hyperliquid_movers import (
+    hyperliquid_top_movers,
+    hyperliquid_top_movers_async,
+)
+from tradingview_mcp.core.services.hyperliquid_analysis import (
+    analyze_hyperliquid_coin,
+    analyze_hyperliquid_mtf,
+)
+from tradingview_mcp.core.services.hyperliquid_backtest import (
+    hyperliquid_run_backtest,
+    hyperliquid_compare_strategies,
+    hyperliquid_walk_forward_backtest,
+    hyperliquid_smart_money,
+)
 from tradingview_mcp.core.utils.validators import (
     validate_timeframe,
     validate_exchange,
     normalize_tradingview_symbol,
     normalize_yahoo_symbol,
-    reject_native_exchange,
+    is_native_provider,
+    native_symbol_prefix,
     reject_native_symbol_prefix,
     NATIVE_PROVIDERS,
     native_support_hint,
@@ -127,7 +142,7 @@ mcp = FastMCP(
         "Tools: top_gainers, top_losers, bollinger_scan, coin_analysis, multi_agent_analysis, "
         "volume_breakout_scanner, futures_market_overview, futures_top_movers, "
         "futures_category_snapshot, futures_watchlist, egx_market_overview, and more. "
-        "Hyperliquid perpetuals (native API, not TradingView) are available only through hyperliquid_market_overview, hyperliquid_funding_rates and hyperliquid_orderbook."
+        "Hyperliquid perpetuals (native API, not TradingView): use exchange=\"HYPERLIQUID\" with top_gainers/top_losers (timeframe=\"1D\" only), coin_analysis, multi_timeframe_analysis and smart_money_analysis; pass symbol=\"HYPERLIQUID:<COIN>\" to backtest_strategy, compare_strategies and walk_forward_backtest_strategy; hyperliquid_market_overview, hyperliquid_funding_rates and hyperliquid_orderbook are Hyperliquid-only. Every other tool that takes an exchange rejects HYPERLIQUID with UNSUPPORTED_EXCHANGE."
     ),
 )
 
@@ -137,6 +152,10 @@ mcp = FastMCP(
 @mcp.tool(annotations=ToolAnnotations(title="Top Gainers Screener", readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def top_gainers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: int = 25) -> list[dict] | dict:
     """Return top gainers for an exchange and timeframe using Bollinger Band analysis.
+
+    For Hyperliquid (exchange="HYPERLIQUID"), returns assets ranked by 24h change (mark price vs previous-day price).
+    With Hyperliquid, timeframe must be "1D"; other timeframes return INVALID_TIMEFRAME error. Hyperliquid rows
+    include volume_24h_usd, open_interest_usd and funding_rate_1h fields.
 
     Args:
         exchange: Exchange name — crypto: KUCOIN, BINANCE, BYBIT, MEXC; stocks: EGX, BIST, NASDAQ, NYSE, BURSA, HKEX, SSE, SZSE, TWSE, TPEX
@@ -150,7 +169,10 @@ async def top_gainers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: i
     """
     limit = max(1, min(limit, 50))
     try:
-        exchange = validate_exchange(exchange, "KUCOIN")
+        exchange = validate_exchange(exchange, "KUCOIN", allow_native=True)
+        if is_native_provider(exchange):
+            # Raw timeframe: the movers check gives the 1D-only hint.
+            return await hyperliquid_top_movers_async(timeframe, losers=False, limit=limit)
         timeframe = validate_timeframe(timeframe, "15m")
         # Underlying tradingview-screener is sync (uses urllib). Push to a
         # worker thread so the event loop is free for other concurrent
@@ -167,12 +189,19 @@ async def top_gainers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: i
 def top_losers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: int = 25) -> list[dict] | dict:
     """Return top losers for an exchange and timeframe. Supports crypto (KUCOIN, BINANCE, MEXC) and stocks (EGX, BIST, NASDAQ).
 
+    For Hyperliquid (exchange="HYPERLIQUID"), returns assets ranked by 24h change (mark price vs previous-day price).
+    With Hyperliquid, timeframe must be "1D"; other timeframes return INVALID_TIMEFRAME error. Hyperliquid rows
+    include volume_24h_usd, open_interest_usd and funding_rate_1h fields.
+
     Returns ``list[dict]`` on success. On ANY failure returns a structured
     error envelope ``{"error": {"code": ..., "retryable": ...}}``.
     """
     limit = max(1, min(limit, 50))
     try:
-        exchange = validate_exchange(exchange, "KUCOIN")
+        exchange = validate_exchange(exchange, "KUCOIN", allow_native=True)
+        if is_native_provider(exchange):
+            # Raw timeframe: the movers check gives the 1D-only hint.
+            return hyperliquid_top_movers(timeframe, losers=True, limit=limit)
         timeframe = validate_timeframe(timeframe, "15m")
         # sort="asc" makes the service sort BEFORE truncating to limit —
         # re-sorting after fetch returned the smallest of the top GAINERS.
@@ -247,6 +276,10 @@ def coin_analysis(symbol: str, exchange: str = "KUCOIN", timeframe: str = "15m")
     across several timeframes, and `combined_analysis` when you also want
     news sentiment + headlines in the same call.
 
+    For Hyperliquid (exchange="HYPERLIQUID" or symbol prefix "HYPERLIQUID:"), analysis is computed from Hyperliquid candles
+    (source: "hyperliquid"). No TradingView rating (Recommend.All) is available; see the not_available list.
+    Accepted Hyperliquid symbol forms: BTC, BTCUSDT, BTC-PERP, HYPERLIQUID:BTC, kPEPE (case-insensitive).
+
     Example: coin_analysis(symbol="BTCUSDT", exchange="BINANCE", timeframe="1h")
 
     Args:
@@ -258,8 +291,10 @@ def coin_analysis(symbol: str, exchange: str = "KUCOIN", timeframe: str = "15m")
         Detailed analysis with all indicators and metrics
     """
     try:
-        exchange = validate_exchange(exchange, "KUCOIN")
+        exchange = validate_exchange(exchange, "KUCOIN", allow_native=True)
         timeframe = validate_timeframe(timeframe, "15m")
+        if is_native_provider(exchange) or native_symbol_prefix(symbol):
+            return analyze_hyperliquid_coin(symbol, timeframe)
         return analyze_coin(symbol, exchange, timeframe)
     except Exception as e:
         return exception_to_envelope(e, context="coin_analysis")
@@ -627,6 +662,8 @@ def smart_money_analysis(
     public "banker fund" indicator family — NOT actual institutional-flow
     data, and not copies of any closed-source script.
 
+    For Hyperliquid (exchange="HYPERLIQUID" or symbol prefix "HYPERLIQUID:"), analysis uses Hyperliquid candles instead of Yahoo.
+
     Args:
         symbol: Bare ticker — EGX: "COMI", "TMGH"; US: "AAPL"; crypto pairs
             work via Yahoo notation ("BTC-USD").
@@ -636,7 +673,8 @@ def smart_money_analysis(
         interval: 1d (default) or 1h
     """
     try:
-        reject_native_exchange(exchange)
+        if is_native_provider(exchange) or native_symbol_prefix(symbol):
+            return hyperliquid_smart_money(symbol, period, interval)
         return analyze_smart_money(symbol, exchange, period, interval)
     except Exception as e:
         return exception_to_envelope(e, context="smart_money_analysis")
@@ -680,6 +718,10 @@ async def multi_timeframe_analysis(symbol: str, exchange: str = "KUCOIN") -> dic
     alignment on ONE symbol; for a single-timeframe deep dive use
     `coin_analysis`; for TA + sentiment + news use `combined_analysis`.
 
+    For Hyperliquid (exchange="HYPERLIQUID" or symbol prefix "HYPERLIQUID:"), analysis is computed from Hyperliquid candles
+    (source: "hyperliquid"). No TradingView rating (Recommend.All) is available; see the not_available list.
+    Accepted Hyperliquid symbol forms: BTC, BTCUSDT, BTC-PERP, HYPERLIQUID:BTC, kPEPE (case-insensitive).
+
     Example: multi_timeframe_analysis(symbol="SOLUSDT", exchange="BINANCE")
 
     Args:
@@ -687,7 +729,9 @@ async def multi_timeframe_analysis(symbol: str, exchange: str = "KUCOIN") -> dic
         exchange: Exchange — crypto: KUCOIN, BINANCE, MEXC; stocks: EGX, BIST, NASDAQ, NYSE, AMEX, NYSEARCA, PCX, SSE, SZSE, TWSE, TPEX
     """
     try:
-        exchange = validate_exchange(exchange, "KUCOIN")
+        exchange = validate_exchange(exchange, "KUCOIN", allow_native=True)
+        if is_native_provider(exchange) or native_symbol_prefix(symbol):
+            return await analyze_hyperliquid_mtf(symbol)
         full_symbol = normalize_tradingview_symbol(symbol, exchange)
         # tradingview_ta backs this with a single threading.Semaphore-gated
         # request; pushing the whole call to a thread keeps the event loop
@@ -741,6 +785,7 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
         timeframe: Analysis timeframe (5m, 15m, 1h, 4h, 1D, 1W)
     """
     try:
+        reject_native_symbol_prefix(symbol)
         exchange_clean = validate_exchange(exchange, "NASDAQ")
         timeframe_clean = validate_timeframe(timeframe, "1D")
     except Exception as e:
@@ -811,6 +856,12 @@ def backtest_strategy(
 ) -> dict:
     """Backtest a trading strategy on historical data with institutional-grade metrics.
 
+    For Hyperliquid perpetuals, use symbol="HYPERLIQUID:<COIN>" (e.g. HYPERLIQUID:BTC) to backtest on perp candles.
+    Note: Hyperliquid provides only the most recent 5,000 candles per interval. With 1h interval, this covers ~208 days,
+    so periods of 1y or 2y will be truncated. Truncation is reported in the data_warning field of the result.
+    For HYPERLIQUID: symbols, annualization uses 365 days (1d) / 8,760 hours (1h) (24/7 market);
+    Yahoo symbols keep the default (252 / 1,638).
+
     Args:
         symbol: Yahoo Finance symbol (AAPL, BTC-USD, THYAO.IS, ^GSPC)
         strategy: rsi | bollinger | macd | ema_cross | supertrend | donchian
@@ -824,6 +875,12 @@ def backtest_strategy(
         include_trade_log: Include full per-trade log (default False)
         include_equity_curve: Include equity curve data points (default False)
     """
+    if native_symbol_prefix(symbol):
+        return hyperliquid_run_backtest(
+            symbol, strategy, period, initial_capital,
+            commission_pct, slippage_pct, interval,
+            include_trade_log, include_equity_curve,
+        )
     return run_backtest(
         symbol, strategy, period, initial_capital,
         commission_pct, slippage_pct, interval,
@@ -840,6 +897,12 @@ def compare_strategies(
 ) -> dict:
     """Run all 9 strategies (RSI, Bollinger, MACD, EMA Cross, Supertrend, Donchian, RSI Pullback, Keltner Breakout, Triple EMA) and return a ranked leaderboard.
 
+    For Hyperliquid perpetuals, use symbol="HYPERLIQUID:<COIN>" (e.g. HYPERLIQUID:BTC) to race strategies on perp candles.
+    Note: Hyperliquid provides only the most recent 5,000 candles per interval. With 1h interval, this covers ~208 days,
+    so periods of 1y or 2y will be truncated. Truncation is reported in the data_warning field of the result.
+    For HYPERLIQUID: symbols, annualization uses 365 days (1d) / 8,760 hours (1h) (24/7 market);
+    Yahoo symbols keep the default (252 / 1,638).
+
     Args:
         symbol: Yahoo Finance symbol (AAPL, BTC-USD, SPY…)
         period: '1mo', '3mo', '6mo', '1y', '2y'
@@ -848,6 +911,8 @@ def compare_strategies(
         initial_capital: Starting capital in USD (default $10,000)
         interval: '1d' (daily) or '1h' (hourly)
     """
+    if native_symbol_prefix(symbol):
+        return hyperliquid_compare_strategies(symbol, period, initial_capital, interval)
     return _compare_strategies(symbol, period, initial_capital, interval=interval)
 
 
@@ -865,6 +930,12 @@ def walk_forward_backtest_strategy(
 ) -> dict:
     """Walk-forward backtest to detect overfitting — validates strategy on unseen data.
 
+    For Hyperliquid perpetuals, use symbol="HYPERLIQUID:<COIN>" (e.g. HYPERLIQUID:BTC) to walk-forward test on perp candles.
+    Note: Hyperliquid provides only the most recent 5,000 candles per interval. With 1h interval, this covers ~208 days,
+    so periods of 1y or 2y will be truncated. Truncation is reported in the data_warning field of the result.
+    For HYPERLIQUID: symbols, annualization uses 365 days (1d) / 8,760 hours (1h) (24/7 market);
+    Yahoo symbols keep the default (252 / 1,638).
+
     Args:
         symbol: Yahoo Finance symbol (AAPL, BTC-USD, SPY…)
         strategy: rsi | bollinger | macd | ema_cross | supertrend | donchian
@@ -879,6 +950,11 @@ def walk_forward_backtest_strategy(
         train_ratio: Fraction of each fold used for training (default 0.7)
         interval: '1d' (daily) or '1h' (hourly)
     """
+    if native_symbol_prefix(symbol):
+        return hyperliquid_walk_forward_backtest(
+            symbol, strategy, period, initial_capital,
+            commission_pct, slippage_pct, n_splits, train_ratio, interval,
+        )
     return walk_forward_backtest(
         symbol, strategy, period, initial_capital,
         commission_pct, slippage_pct, n_splits, train_ratio, interval,
@@ -894,6 +970,10 @@ async def yahoo_price(symbol: str) -> dict:
     Args:
         symbol: Yahoo Finance symbol — e.g. AAPL, BTC-USD, SPY, ^GSPC, EURUSD=X, THYAO.IS
     """
+    try:
+        reject_native_symbol_prefix(symbol)
+    except Exception as e:
+        return exception_to_envelope(e, context="yahoo_price")
     return await get_price_async(normalize_yahoo_symbol(symbol))
 
 

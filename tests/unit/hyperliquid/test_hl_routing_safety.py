@@ -27,8 +27,22 @@ from tradingview_mcp.core.utils.validators import (
 
 HL_TOOLS = list(NATIVE_PROVIDER_TOOLS["hyperliquid"])
 
-# Step 2 adds the names of tools that opt in to native venues.
-NATIVE_OPT_IN: set[str] = set()
+HL_NEW_TOOLS = ["hyperliquid_market_overview", "hyperliquid_funding_rates", "hyperliquid_orderbook"]
+
+# Tools with an ``exchange`` argument that serve Hyperliquid (step 2).
+NATIVE_OPT_IN: set[str] = {
+    "top_gainers",
+    "top_losers",
+    "coin_analysis",
+    "multi_timeframe_analysis",
+    "smart_money_analysis",
+}
+# Tools with no ``exchange`` argument that route on a "HYPERLIQUID:" symbol prefix.
+SYMBOL_PREFIX_OPT_IN: set[str] = {
+    "backtest_strategy",
+    "compare_strategies",
+    "walk_forward_backtest_strategy",
+}
 
 # Values for required parameters, by name. Extend when a tool adds a new one.
 REQUIRED_ARGS: dict[str, object] = {"symbol": "BTC"}
@@ -108,13 +122,23 @@ async def test_every_exchange_tool_rejects_hyperliquid(tool, ex, no_network, tri
 
 def test_discovery_finds_the_expected_tools():
     names = {t.name for t in _exchange_tools()}
-    assert len(names) >= 14
-    assert {"smart_money_analysis", "combined_analysis", "top_gainers", "multi_timeframe_analysis"} <= names
+    assert len(names) >= 9
+    assert {"combined_analysis", "multi_agent_analysis", "bollinger_scan", "rating_filter",
+            "volume_confirmation_analysis"} <= names
+    assert names.isdisjoint(NATIVE_OPT_IN)
+
+
+def test_opt_in_tables_match_hint_table():
+    tools = server.mcp._tool_manager.list_tools()
+    with_exchange = {t.name for t in tools if "exchange" in t.parameters.get("properties", {})}
+    hint = set(NATIVE_PROVIDER_TOOLS["hyperliquid"])
+    assert hint & with_exchange == NATIVE_OPT_IN
+    assert hint == set(HL_NEW_TOOLS) | NATIVE_OPT_IN | SYMBOL_PREFIX_OPT_IN
 
 
 def test_new_hyperliquid_tools_have_no_exchange_argument():
     by_name = {t.name: t for t in server.mcp._tool_manager.list_tools()}
-    for name in HL_TOOLS:
+    for name in HL_NEW_TOOLS:
         assert name in by_name
         assert "exchange" not in by_name[name].parameters.get("properties", {})
 
@@ -207,10 +231,43 @@ def test_collision_symbol_not_found_error(monkeypatch):
 
 # ── 8. symbol-prefix guard ───────────────────────────────────────────────────
 
-def test_coin_analysis_rejects_hyperliquid_prefix(no_network, tripwires):
-    result = server.coin_analysis("HYPERLIQUID:BTC", exchange="KUCOIN")
+def test_volume_confirmation_rejects_hyperliquid_prefix(no_network, tripwires):
+    result = server.volume_confirmation_analysis("HYPERLIQUID:BTC", exchange="KUCOIN")
     assert result["error"]["code"] == "UNSUPPORTED_EXCHANGE"
     assert no_network == [] and tripwires.hits == []
+
+
+async def test_combined_analysis_rejects_hyperliquid_prefix(monkeypatch, no_network, tripwires):
+    seen: list[str] = []
+
+    def make(name):
+        def _boom(*a, **k):
+            seen.append(name)
+            raise AssertionError(f"tripwire hit: {name}")
+        return _boom
+
+    for attr in ("analyze_coin", "analyze_sentiment", "fetch_news_summary"):
+        monkeypatch.setattr(server, attr, make(f"server.{attr}"), raising=False)
+    result = server.combined_analysis("HYPERLIQUID:BTC", exchange="NASDAQ")
+    if hasattr(result, "__await__"):
+        result = await result
+    assert result["error"]["code"] == "UNSUPPORTED_EXCHANGE"
+    assert seen == [] and no_network == [] and tripwires.hits == []
+
+
+async def test_yahoo_price_rejects_hyperliquid_prefix(monkeypatch, no_network, tripwires):
+    seen: list[str] = []
+
+    def _boom(*a, **k):
+        seen.append("server.get_price_async")
+        raise AssertionError("tripwire hit: server.get_price_async")
+
+    monkeypatch.setattr(server, "get_price_async", _boom, raising=False)
+    result = server.yahoo_price("hyperliquid:btc")
+    if hasattr(result, "__await__"):
+        result = await result
+    assert result["error"]["code"] == "UNSUPPORTED_EXCHANGE"
+    assert seen == [] and no_network == [] and tripwires.hits == []
 
 
 async def test_multi_agent_analysis_rejects_hyperliquid_prefix(no_network, tripwires):
@@ -248,3 +305,73 @@ def test_smart_money_still_serves_other_venues(monkeypatch):
 def test_listing_hints_still_see_hyperliquid():
     assert "HYPERLIQUID" in exchanges_listing_symbol("BTC")
     assert exchanges_listing_symbol("kpepe") == ["HYPERLIQUID"]
+
+
+# ── 11. auto-discovered symbol-prefix guard (tools with symbol, no exchange) ──
+
+# D5 exemptions: tools that hand the raw symbol to Yahoo or Marketaux, never to
+# TradingView (verified by reading each handler's upstream call).
+#   stock_extended_hours          -> yahoo (get_extended_hours_price_async)
+#   stock_options_chain           -> yahoo options service
+#   stock_options_unusual_activity-> yahoo options service
+#   market_sentiment              -> Marketaux/RSS (analyze_sentiment)
+#   financial_news                -> Marketaux (fetch_news_summary)
+SYMBOL_ONLY_D5_EXEMPT: set[str] = {
+    "stock_extended_hours",
+    "stock_options_chain",
+    "stock_options_unusual_activity",
+    "market_sentiment",
+    "financial_news",
+}
+
+
+def _symbol_only_tools():
+    out = []
+    for t in server.mcp._tool_manager.list_tools():
+        props = t.parameters.get("properties", {})
+        if "symbol" in props and "exchange" not in props:
+            if t.name in SYMBOL_PREFIX_OPT_IN or t.name in HL_NEW_TOOLS:
+                continue
+            out.append(t)
+    return out
+
+
+def test_symbol_only_discovery_sanity():
+    names = {t.name for t in _symbol_only_tools()}
+    assert "yahoo_price" in names
+    assert SYMBOL_ONLY_D5_EXEMPT <= names | {"financial_news"}
+
+
+def _tv_tripwires(monkeypatch, hits):
+    def make(name):
+        def _boom(*a, **k):
+            hits.append(name)
+            raise AssertionError(f"tripwire hit: {name}")
+        return _boom
+
+    for mod, attr in [
+        (screener_service, "get_multiple_analysis"),
+        (screener_provider, "_scan_with_retry"),
+        (screener_provider, "fetch_atr_for_ticker"),
+    ]:
+        monkeypatch.setattr(mod, attr, make(f"{mod.__name__}.{attr}"))
+
+
+@pytest.mark.parametrize("tool", _symbol_only_tools(), ids=lambda t: t.name)
+async def test_symbol_only_tools_guard_hyperliquid_prefix(tool, monkeypatch, no_network, tripwires):
+    hits: list[str] = []
+    _tv_tripwires(monkeypatch, hits)
+    exempt = tool.name in SYMBOL_ONLY_D5_EXEMPT
+    args = {**{k: REQUIRED_ARGS.get(k, "BTC") for k in (tool.parameters.get("required") or [])},
+            "symbol": "HYPERLIQUID:BTC"}
+    try:
+        result = await tool.run(args)
+    except Exception as e:  # exempt tools may blow up on the disabled network
+        if not exempt:
+            raise
+        result = {"raised": repr(e)}
+    assert hits == [] and tripwires.hits == [], f"{tool.name} reached TradingView/Yahoo code"
+    if not exempt:
+        assert isinstance(result, dict) and "error" in result, result
+        assert result["error"]["code"] == "UNSUPPORTED_EXCHANGE", (
+            f"{tool.name}: unguarded symbol-only tool; guard it or add a commented D5 exemption")

@@ -6,7 +6,7 @@ import re
 
 from tradingview_mcp import server
 from tradingview_mcp.core.services.coinlist import load_symbols
-from tradingview_mcp.core.utils.validators import COINLIST_DIR
+from tradingview_mcp.core.utils.validators import COINLIST_DIR, NATIVE_PROVIDER_TOOLS
 
 HL_TOOLS = ["hyperliquid_market_overview", "hyperliquid_funding_rates", "hyperliquid_orderbook"]
 LINE = re.compile(r"^HYPERLIQUID:[A-Za-z0-9]+$")
@@ -67,3 +67,62 @@ def test_exchanges_list_fallback(monkeypatch):
 def test_instructions_mention_new_tools():
     for name in HL_TOOLS:
         assert name in server.mcp.instructions
+
+
+# ── step 2 additions ─────────────────────────────────────────────────────────
+
+OPTED_IN = [
+    "top_gainers", "top_losers", "coin_analysis", "multi_timeframe_analysis",
+    "smart_money_analysis", "backtest_strategy", "compare_strategies",
+    "walk_forward_backtest_strategy",
+]
+
+
+def _descriptions() -> dict[str, str]:
+    return {t.name: (t.description or "") for t in server.mcp._tool_manager.list_tools()}
+
+
+def test_every_native_tool_in_instructions_and_exchanges_list():
+    text = server.exchanges_list()
+    for name in NATIVE_PROVIDER_TOOLS["hyperliquid"]:
+        assert name in server.mcp.instructions, name
+        assert name in text, name
+
+
+def test_instructions_step2_content():
+    ins = server.mcp.instructions
+    assert 'timeframe="1D"' in ins
+    assert "HYPERLIQUID:<COIN>" in ins
+    for name in NATIVE_PROVIDER_TOOLS["hyperliquid"]:
+        assert name in ins
+
+
+def test_opted_in_tool_descriptions_mention_hyperliquid():
+    d = _descriptions()
+    for name in OPTED_IN:
+        assert "HYPERLIQUID" in d[name], name
+
+
+def test_movers_descriptions_mention_1d_and_24h():
+    d = _descriptions()
+    for name in ("top_gainers", "top_losers"):
+        assert "1D" in d[name] and "24h" in d[name], name
+
+
+def test_backtest_descriptions_mention_prefix_and_truncation():
+    d = _descriptions()
+    for name in ("backtest_strategy", "compare_strategies", "walk_forward_backtest_strategy"):
+        assert "HYPERLIQUID:" in d[name], name
+        assert "5,000" in d[name], name
+
+
+def test_hyperliquid_tool_descriptions_drop_other_tools_reject():
+    for name, desc in _descriptions().items():
+        if name.startswith("hyperliquid_"):
+            assert "Other tools reject" not in desc, name
+
+
+def test_non_opted_in_descriptions_do_not_mention_hyperliquid():
+    d = _descriptions()
+    for name in ("bollinger_scan", "combined_analysis"):
+        assert "HYPERLIQUID" not in d[name], name

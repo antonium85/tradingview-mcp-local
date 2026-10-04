@@ -61,7 +61,7 @@ async def hyperliquid_market_overview(sort_by: str = "volume", limit: int = 20,
     """Hyperliquid perpetuals market overview, ranked.
 
     Perpetual futures only, read-only, from Hyperliquid's own API (not
-    TradingView). Other tools reject exchange="HYPERLIQUID".
+    TradingView). Hyperliquid also works in top_gainers/top_losers (timeframe "1D"), coin_analysis, multi_timeframe_analysis, smart_money_analysis and the backtest tools (symbol "HYPERLIQUID:<COIN>"); every other tool rejects exchange="HYPERLIQUID".
 
     Coins whose names start with a lowercase 'k' (e.g. kPEPE) are 1,000-unit
     contracts. Funding is paid hourly (funding_rate_1h); the annualized figure
@@ -113,7 +113,7 @@ async def hyperliquid_funding_rates(symbol: str = "", limit: int = 10,
     """Hyperliquid perpetual funding rates: extremes, plus history for one coin.
 
     Perpetual futures only, read-only, from Hyperliquid's own API (not
-    TradingView). Other tools reject exchange="HYPERLIQUID".
+    TradingView). Hyperliquid also works in top_gainers/top_losers (timeframe "1D"), coin_analysis, multi_timeframe_analysis, smart_money_analysis and the backtest tools (symbol "HYPERLIQUID:<COIN>"); every other tool rejects exchange="HYPERLIQUID".
 
     Funding is hourly (funding_rate_1h is a decimal per hour; annualized is
     rate * 24 * 365 in percent). Coins starting with a lowercase 'k' (kPEPE)
@@ -174,7 +174,7 @@ async def hyperliquid_orderbook(symbol: str, depth: int = 10) -> dict:
     """Hyperliquid perpetual L2 order book with spread and imbalance.
 
     Perpetual futures only, read-only, from Hyperliquid's own API (not
-    TradingView). Other tools reject exchange="HYPERLIQUID".
+    TradingView). Hyperliquid also works in top_gainers/top_losers (timeframe "1D"), coin_analysis, multi_timeframe_analysis, smart_money_analysis and the backtest tools (symbol "HYPERLIQUID:<COIN>"); every other tool rejects exchange="HYPERLIQUID".
 
     Accepts BTC, BTCUSDT, BTC-PERP, HYPERLIQUID:BTC, case-insensitive. Coins
     starting with a lowercase 'k' (kPEPE) are 1,000-unit contracts, so sizes

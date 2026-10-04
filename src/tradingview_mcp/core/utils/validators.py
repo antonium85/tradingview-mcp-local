@@ -89,12 +89,20 @@ _TA_ONLY_SCREENERS: dict = {
 NATIVE_PROVIDERS: frozenset[str] = frozenset({"hyperliquid"})
 
 # Tools that accept each native venue. This is the single source of truth for
-# hints. Step 1 lists only the new tools; Step 2 appends opted-in tools.
+# hints. Step 1 listed the new tools; Step 2 appended the opted-in tools.
 NATIVE_PROVIDER_TOOLS: dict[str, tuple[str, ...]] = {
     "hyperliquid": (
         "hyperliquid_market_overview",
         "hyperliquid_funding_rates",
         "hyperliquid_orderbook",
+        "top_gainers",
+        "top_losers",
+        "coin_analysis",
+        "multi_timeframe_analysis",
+        "smart_money_analysis",
+        "backtest_strategy",
+        "compare_strategies",
+        "walk_forward_backtest_strategy",
     ),
 }
 
@@ -138,6 +146,21 @@ def reject_native_exchange(exchange: str | None) -> None:
     """
     if is_native_provider(exchange):
         raise _unsupported_exchange_error(exchange)
+
+
+def native_symbol_prefix(symbol: str | None) -> str | None:
+    """Lower-case native venue named by a "VENUE:..." prefix, else None.
+
+    native_symbol_prefix("HYPERLIQUID:BTC")    -> "hyperliquid"
+    native_symbol_prefix(" hyperliquid:kpepe ") -> "hyperliquid"
+    native_symbol_prefix("BINANCE:BTCUSDT")    -> None
+    native_symbol_prefix("BTC") / ("") / (None) / ("HYPERLIQUID") -> None
+    """
+    raw = (symbol or "").strip()
+    if ":" not in raw:
+        return None
+    prefix = raw.split(":", 1)[0].strip().lower()
+    return prefix if prefix in NATIVE_PROVIDERS else None
 
 
 def reject_native_symbol_prefix(symbol: str | None) -> None:

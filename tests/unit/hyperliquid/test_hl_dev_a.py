@@ -16,6 +16,14 @@ HL_TOOLS = [
     "hyperliquid_market_overview",
     "hyperliquid_funding_rates",
     "hyperliquid_orderbook",
+    "top_gainers",
+    "top_losers",
+    "coin_analysis",
+    "multi_timeframe_analysis",
+    "smart_money_analysis",
+    "backtest_strategy",
+    "compare_strategies",
+    "walk_forward_backtest_strategy",
 ]
 
 
@@ -60,7 +68,9 @@ def test_is_native_provider_false(ex):
 def test_native_support_hint_exact():
     expected = (
         "HYPERLIQUID is a native (non-TradingView) perpetuals venue; it is supported only by: "
-        "hyperliquid_market_overview, hyperliquid_funding_rates, hyperliquid_orderbook."
+        "hyperliquid_market_overview, hyperliquid_funding_rates, hyperliquid_orderbook, "
+        "top_gainers, top_losers, coin_analysis, multi_timeframe_analysis, smart_money_analysis, "
+        "backtest_strategy, compare_strategies, walk_forward_backtest_strategy."
     )
     assert v.native_support_hint("hyperliquid") == expected
     assert v.native_support_hint(" HyperLiquid ") == expected

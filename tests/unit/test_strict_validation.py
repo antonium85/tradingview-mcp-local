@@ -80,12 +80,19 @@ class TestToolBoundary:
         result = asyncio.run(server.top_gainers(exchange="KRAKEN"))
         assert result["error"]["code"] == "INVALID_EXCHANGE"
 
-    def test_top_gainers_rejects_hyperliquid(self):
+    def test_top_gainers_hyperliquid_needs_1d(self):
         result = asyncio.run(server.top_gainers(exchange="HYPERLIQUID"))
-        assert result["error"]["code"] == "UNSUPPORTED_EXCHANGE"
+        assert result["error"]["code"] == "INVALID_TIMEFRAME"
+        assert result["error"]["valid_timeframes"] == ["1D"]
 
-    def test_coin_analysis_rejects_hyperliquid(self):
-        result = server.coin_analysis("BTC", exchange="hyperliquid")
+    def test_coin_analysis_hyperliquid_validates_timeframe(self):
+        result = server.coin_analysis("BTC", exchange="hyperliquid", timeframe="30m")
+        assert result["error"]["code"] == "INVALID_TIMEFRAME"
+
+    def test_bollinger_scan_rejects_hyperliquid(self):
+        result = server.bollinger_scan(exchange="HYPERLIQUID")
+        if hasattr(result, "__await__"):
+            result = asyncio.run(result)
         assert result["error"]["code"] == "UNSUPPORTED_EXCHANGE"
 
     def test_coin_analysis_returns_invalid_timeframe_envelope(self):

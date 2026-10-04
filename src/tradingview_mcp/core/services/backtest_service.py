@@ -19,7 +19,7 @@ import math
 import statistics
 import urllib.request
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from tradingview_mcp.core.services.indicators_calc import (
     calc_rsi, calc_bollinger, calc_macd, calc_ema, calc_sma, calc_atr,
@@ -610,6 +610,8 @@ def run_backtest(
     include_equity_curve: bool = False,
     risk_free_rate: Optional[float] = None,
     periods_per_year: Optional[int] = None,
+    *,
+    fetch_ohlcv: Optional[Callable[[str, str, str], list]] = None,
 ) -> dict:
     strategy = strategy.lower().strip()
     period   = period.lower().strip()
@@ -627,7 +629,7 @@ def run_backtest(
         return {"error": num_err}
 
     try:
-        candles = _fetch_ohlcv(symbol, period, interval)
+        candles = (fetch_ohlcv or _fetch_ohlcv)(symbol, period, interval)
     except Exception as e:
         return {"error": f"Failed to fetch data for '{symbol}': {e}"}
 
@@ -688,6 +690,8 @@ def compare_strategies(
     interval: str = "1d",
     risk_free_rate: Optional[float] = None,
     periods_per_year: Optional[int] = None,
+    *,
+    fetch_ohlcv: Optional[Callable[[str, str, str], list]] = None,
 ) -> dict:
     """Run all 9 strategies on one symbol. Supports 1d and 1h intervals."""
     period   = period.lower().strip()
@@ -702,7 +706,7 @@ def compare_strategies(
         return {"error": num_err}
 
     try:
-        candles = _fetch_ohlcv(symbol, period, interval)
+        candles = (fetch_ohlcv or _fetch_ohlcv)(symbol, period, interval)
     except Exception as e:
         return {"error": f"Failed to fetch data for '{symbol}': {e}"}
 
@@ -777,6 +781,8 @@ def walk_forward_backtest(
     interval: str = "1d",
     risk_free_rate: Optional[float] = None,
     periods_per_year: Optional[int] = None,
+    *,
+    fetch_ohlcv: Optional[Callable[[str, str, str], list]] = None,
 ) -> dict:
     """
     Walk-forward backtesting — detect overfitting via train/test splits.
@@ -821,7 +827,7 @@ def walk_forward_backtest(
         return {"error": num_err}
 
     try:
-        candles = _fetch_ohlcv(symbol, period, interval)
+        candles = (fetch_ohlcv or _fetch_ohlcv)(symbol, period, interval)
     except Exception as e:
         return {"error": f"Failed to fetch data for '{symbol}': {e}"}
 

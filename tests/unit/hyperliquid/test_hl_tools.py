@@ -57,7 +57,7 @@ def _tools():
 def test_registered_names_match_hint_table():
     tools = _tools()
     assert set(NAMES) <= set(tools)
-    assert set(NAMES) == set(NATIVE_PROVIDER_TOOLS["hyperliquid"])
+    assert NATIVE_PROVIDER_TOOLS["hyperliquid"][:3] == tuple(NAMES)
     assert ht.TOOL_TITLES == TITLES
 
 
@@ -76,7 +76,7 @@ def test_annotations_and_async():
 
 def test_server_registers_exactly_the_hyperliquid_tools():
     names = {t.name for t in server.mcp._tool_manager.list_tools() if t.name.startswith("hyperliquid_")}
-    assert names == set(NATIVE_PROVIDER_TOOLS["hyperliquid"])
+    assert names == set(NAMES)
 
 
 def test_register_returns_names_in_title_order():

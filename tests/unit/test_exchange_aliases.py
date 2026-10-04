@@ -216,6 +216,9 @@ class TestNativeProviders:
         hint = native_support_hint("hyperliquid")
         assert hint == (
             "HYPERLIQUID is a native (non-TradingView) perpetuals venue; it is supported only by: "
-            "hyperliquid_market_overview, hyperliquid_funding_rates, hyperliquid_orderbook."
+            "hyperliquid_market_overview, hyperliquid_funding_rates, hyperliquid_orderbook, "
+            "top_gainers, top_losers, coin_analysis, multi_timeframe_analysis, "
+            "smart_money_analysis, backtest_strategy, compare_strategies, "
+            "walk_forward_backtest_strategy."
         )
         assert native_support_hint("binance") == ""

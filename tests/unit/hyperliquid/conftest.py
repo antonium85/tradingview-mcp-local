@@ -16,6 +16,14 @@ def load_fixture(name: str):
     return json.loads((FIXTURES / name).read_text())
 
 
+_CANDLE_BY_INTERVAL = {
+    "1d": "candle_snapshot_BTC_1d.json",
+    "4h": "candle_snapshot_BTC_4h.json",
+    "15m": "candle_snapshot_BTC_15m.json",
+    "1w": "candle_snapshot_BTC_1w.json",
+}   # any other interval (incl. 1h) -> candle_snapshot_BTC_1h.json
+
+
 class HLMock:
     """Routes Hyperliquid /info POSTs to saved real responses.
 
@@ -85,7 +93,9 @@ class HLMock:
                 return httpx.Response(200, json=load_fixture("candle_snapshot_MATIC_1h_empty.json"))
             if coin == "kPEPE":
                 return httpx.Response(200, json=load_fixture("candle_snapshot_kPEPE_1d.json"))
-            return httpx.Response(200, json=load_fixture("candle_snapshot_BTC_1h.json"))
+            iv = (body.get("req") or {}).get("interval")
+            name = _CANDLE_BY_INTERVAL.get(iv, "candle_snapshot_BTC_1h.json")
+            return httpx.Response(200, json=load_fixture(name))
         if t == "fundingHistory":
             if coin not in self.known:
                 return httpx.Response(500, content=b"null")
@@ -134,3 +144,13 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", _gai)
     monkeypatch.setattr(socket.socket, "connect", _connect)
     return calls
+
+
+@pytest.fixture
+def frozen_now(monkeypatch):
+    """Pin hyperliquid_service._now_ms to the step-2 capture time (opt-in)."""
+    from tradingview_mcp.core.services import hyperliquid_service as svc
+
+    ms = load_fixture("capture_info_step2.json")["captured_at_ms"]
+    monkeypatch.setattr(svc, "_now_ms", lambda: ms)
+    return ms
